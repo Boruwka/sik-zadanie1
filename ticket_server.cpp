@@ -19,6 +19,10 @@
 
 
 const size_t BUFFER_SIZE = 65507;
+const size_t MIN_PORT = 0;
+const size_t MAX_PORT = 65535;
+const size_t MAX_TIMEOUT = 86400;
+const size_t BYTE_SIZE = 8;
 
 // Evaluate `x`: if non-zero, describe it as a standard error code and exit with an error.
 #define CHECK(x)                                                          \
@@ -126,9 +130,7 @@ void send_message(int socket_fd, const struct sockaddr_in *client_address, const
     ENSURE(sent_length == (ssize_t) length);
 }
 
-int MIN_PORT = 0;
-int MAX_PORT = 65535;
-int MAX_TIMEOUT = 86400;
+
 
 bool does_file_exist(const std::string& name) 
 {
@@ -163,6 +165,13 @@ class event
     // int id; // wystarczy indeks w wektorze
     std::string name;
     int tickets_count;
+    size_t name_length;
+
+    size_t get_size() const
+    {
+        return name_length + 4;
+    }
+
 };
 
 void read_file_to_map(std::string filename, std::vector<event>& events)
@@ -180,6 +189,7 @@ void read_file_to_map(std::string filename, std::vector<event>& events)
         event e;
         e.name = title;
         e.tickets_count = tickets;
+        e.name_length = title.length();
         events.push_back(e);
     } 
 
@@ -203,16 +213,41 @@ void check_alloc(void* ptr)
     }
 }
 
-void process_get_events(char* buffer)
+void push_event_to_buffer(char* buffer, const event e, const size_t id)
 {
+    buffer[0] = id;
+    buffer[1] = e.tickets_count / BYTE_SIZE;
+    buffer[2] = e.tickets_count % BYTE_SIZE;
+    buffer[3] = e.name_length;
+    strcpy(&(buffer[4]), e.name.c_str());
+}
+
+void process_get_events(char* buffer, const std::vector<event> events)
+{
+    size_t remaining_size = BUFFER_SIZE-1;
+    buffer[0] = 2; // message id
+    size_t num_of_events = events.size();
+    for (size_t i = 0; i < num_of_events; i++)
+    {
+        if (events[i].get_size() > remaining_size)
+        {
+            // nie możemy tego eventu wsadzić, przechodzimy do następnego
+            continue;
+        }
+        else
+        {
+            push_event_to_buffer(&(buffer[BUFFER_SIZE-1-remaining_size]), events[i], i);
+            // wsadzamy event do buffera
+        }
+    }
 }
 
 // odczytuje bufor, przetwarza żądanie i umieszcza w buforze stosowną odpowiedź
-void process_request(char* buffer)
+void process_request(char* buffer, const std::vector<event> events)
 {
     if (buffer[0] == 1)
     {
-        process_get_events(buffer);
+        process_get_events(buffer, events);
     }
     else if (buffer[0] == 3)
     {
