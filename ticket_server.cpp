@@ -2,6 +2,8 @@
 #include <sys/stat.h>
 #include <fstream>
 #include <vector>
+#include <set>
+#include <ctime>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,7 +24,17 @@ const size_t BUFFER_SIZE = 65507;
 const size_t MIN_PORT = 0;
 const size_t MAX_PORT = 65535;
 const size_t MAX_TIMEOUT = 86400;
-const size_t BYTE_SIZE = 8;
+const size_t BYTE_SIZE = 256;
+const unsigned int GET_EVENTS_ID = 1;
+const unsigned int EVENTS_ID = 2;
+const unsigned int GET_RESERVATION_ID = 3;
+const unsigned int RESERVATION_ID = 4;
+const unsigned int GET_TICKETS_ID = 5;
+const unsigned int TICKETS_ID = 6;
+const unsigned int BAD_REQUEST_ID = 255;
+const size_t MAX_TICKET_COUNT = (BUFFER_SIZE - 7)/7;
+const uint16_t DEFAULT_PORT = 2022;
+const uint32_t DEFAULT_TIMEOUT = 5;
 
 // Evaluate `x`: if non-zero, describe it as a standard error code and exit with an error.
 #define CHECK(x)                                                          \
@@ -164,7 +176,7 @@ class event
     public:
     // int id; // wystarczy indeks w wektorze
     std::string name;
-    int tickets_count;
+    int ticket_count;
     size_t name_length;
 
     size_t get_size() const
@@ -172,6 +184,16 @@ class event
         return name_length + 4;
     }
 
+};
+
+class reservation
+{
+    public:
+    unsigned int reservation_id;
+    unsigned int event_id;
+    size_t ticket_count;
+    char* cookie;
+    unsigned long long expiration_time;
 };
 
 void read_file_to_map(std::string filename, std::vector<event>& events)
@@ -188,7 +210,7 @@ void read_file_to_map(std::string filename, std::vector<event>& events)
         tickets = stoi(tickets_str);
         event e;
         e.name = title;
-        e.tickets_count = tickets;
+        e.ticket_count = tickets;
         e.name_length = title.length();
         events.push_back(e);
     } 
@@ -196,11 +218,12 @@ void read_file_to_map(std::string filename, std::vector<event>& events)
     file_stream.close();  
 }
 
+// funkcja tylko do debugu
 void wypisz_eventy(const std::vector<event> events)
 {
     for (auto event: events)
     {
-        printf("%s %d\n", event.name.c_str(), event.tickets_count);
+        printf("%s %d\n", event.name.c_str(), event.ticket_count);
     }
 }
 
@@ -215,17 +238,19 @@ void check_alloc(void* ptr)
 
 void push_event_to_buffer(char* buffer, const event e, const size_t id)
 {
+    // ta cała funkcja jest źle
     buffer[0] = id;
-    buffer[1] = e.tickets_count / BYTE_SIZE;
-    buffer[2] = e.tickets_count % BYTE_SIZE;
+    buffer[1] = e.ticket_count / BYTE_SIZE;
+    buffer[2] = e.ticket_count % BYTE_SIZE;
     buffer[3] = e.name_length;
     strcpy(&(buffer[4]), e.name.c_str());
 }
 
+
 void process_get_events(char* buffer, const std::vector<event> events)
 {
     size_t remaining_size = BUFFER_SIZE-1;
-    buffer[0] = 2; // message id
+    buffer[0] = EVENTS_ID;
     size_t num_of_events = events.size();
     for (size_t i = 0; i < num_of_events; i++)
     {
@@ -242,18 +267,103 @@ void process_get_events(char* buffer, const std::vector<event> events)
     }
 }
 
-// odczytuje bufor, przetwarza żądanie i umieszcza w buforze stosowną odpowiedź
-void process_request(char* buffer, const std::vector<event> events)
+unsigned int read_id_from_buffer(const char* buffer)
 {
-    if (buffer[0] == 1)
+    unsigned int res = 0;
+    unsigned int num_of_bytes = 4;
+
+    for (unsigned int i = 0; i < num_of_bytes; i++)
     {
-        process_get_events(buffer, events);
-    }
-    else if (buffer[0] == 3)
+        res *= BYTE_SIZE;
+        res += buffer[i];
+    } 
+    
+    return res;
+}
+
+size_t read_ticket_count_from_buffer(const char* buffer)
+{
+    size_t res = 0;
+    unsigned int num_of_bytes = 2;
+
+    for (size_t i = 0; i < num_of_bytes; i++)
     {
-        process_get_reservation(buffer);
+        res *= BYTE_SIZE;
+        res += buffer[i];
+    } 
+    
+    return res;
+}
+
+void push_id_to_buffer(char* buffer, unsigned int id)
+{
+    unsigned int num_of_bytes = 4;
+
+    for (unsigned int i = num_of_bytes - 1; i >= 0; i--)
+    {
+        buffer[i] = id % BYTE_SIZE;
+        id /= BYTE_SIZE;
     }
-    else if (buffer[0] == 5)
+}
+
+void push_bad_request(char* buffer, const unsigned int id)
+{
+    buffer[0] = BAD_REQUEST_ID;
+    push_id_to_buffer(&(buffer[1]), id);
+    
+}
+
+void process_get_reservation(char* buffer, const std::vector<event> events, std::set<reservation>& reservations, const unsigned int num_of_events, unsigned int reservation_id_counter)
+{
+    /* Serwer odpowiada komunikatem BAD_REQUEST z wartością event_id w odpowiedzi na komunikat GET_RESERVATION, jeśli prośba nie może być zrealizowana, klient podał nieprawidłowe event_id, prosi o zero biletów, liczba dostępnych biletów jest mniejsza niż żądana, bilety zostały w międzyczasie zarezerwowane przez innego klienta, żądana liczba biletów nie mieści się w komunikacie TICKETS (który musi się zmieścić w jednym datagramie UDP). */
+    /* RESERVATION – message_id = 4, reservation_id, event_id, ticket_count, cookie, expiration_time, odpowiedź na komunikat GET_RESERVATION potwierdzająca rezerwację, zawierająca czas, do którego należy odebrać zarezerwowane bilety; */
+    
+    unsigned int event_id = read_id_from_buffer(&(buffer[1]));
+    if (event_id >= num_of_events)
+    {
+        push_bad_request(buffer, event_id);
+        return;
+    }
+
+    size_t ticket_count = read_ticket_count_from_buffer(&(buffer[5]));
+    if (ticket_count == 0 || ticket_count < events[event_id].ticket_count || ticket_count > MAX_TICKET_COUNT)
+    {
+        push_bad_request(buffer, event_id);
+        return;
+    }
+    
+    reservation r;
+    r.reservation_id = reservation_id_counter + 1;
+    reservation_id_counter++;
+    r.event_id = event_id;
+    r.ticket_count = ticket_count;
+    r.cookie = generate_cookie(r.reservation_id, r.event_id);
+    time_t time_in_sec;
+    time(&time_in_sec);
+    r.expiration_time = (long long)time_in_sec;
+    reservations.push(r);
+
+    buffer[0] = RESERVATION_ID;
+    push_reservation_to_buffer(&(buffer[1]), r);
+    /*push_id_to_buffer(&(buffer[1]), r.reservation_id);
+    push_id_to_buffer(&(buffer[5]), r.event_id);
+    push_ticket_count_to_buffer(&(buffer[9]), r.ticket_count);*/
+    // teraz musimy odesłać r komunikatem RESERVATION
+
+}
+
+// odczytuje bufor, przetwarza żądanie i umieszcza w buforze stosowną odpowiedź
+void process_request(char* buffer, const std::vector<event> events, std::set<reservation> reservations, const unsigned int num_of_events)
+{
+    if (buffer[0] == GET_EVENTS_ID)
+    {
+        process_get_events(buffer, events, num_of_events);
+    }
+    else if (buffer[0] == GET_RESERVATION_ID)
+    {
+        process_get_reservation(buffer, events, reservations, num_of_events);
+    }
+    else if (buffer[0] == GET_TICKETS_ID)
     {
         process_get_tickets(buffer);
     }
@@ -263,8 +373,8 @@ void process_request(char* buffer, const std::vector<event> events)
 int main(int argc, char *argv[])
 {
     std::string filename;
-    uint16_t port = 2022;
-    uint32_t timeout = 5;
+    uint16_t port = DEFAULT_PORT;
+    uint32_t timeout = DEFAULT_TIMEOUT;
     for (size_t i = 1; i < argc; i += 2)
     {
         printf("%s %s\n", argv[i], argv[i+1]);
@@ -295,6 +405,9 @@ int main(int argc, char *argv[])
     struct sockaddr_in client_address;
     char* buffer = (char*)malloc(BUFFER_SIZE * sizeof(char));
     check_alloc(buffer);
+
+    unsigned int reservation_id_counter = MIN_RESERVATION_ID - 1;
+    std::set<reservation> reservations;
 
     while (true)
     {
