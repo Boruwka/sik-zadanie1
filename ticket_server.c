@@ -558,38 +558,63 @@ void process_request(char* buffer, const event_t* events, reservations_t* reserv
 int main(int argc, char *argv[])
 {
     char* filename;
-    uint16_t port = DEFAULT_PORT;
-    uint32_t timeout = DEFAULT_TIMEOUT;
+    int port = DEFAULT_PORT;
+    int timeout = DEFAULT_TIMEOUT;
+    bool filename_loaded = false;
+    
+    if (argc % 2 == 0 || argc < 2)
+    {
+        fprintf(stderr, "Wrong number of arguments, server terminated.\n");
+        return 1;
+    }
+
+    fprintf(stderr, "%d\n", atoi("a\0"));
     for (size_t i = 1; i < argc; i += 2)
     {
         printf("%s %s\n", argv[i], argv[i+1]);
         if (strcmp(argv[i], "-f\0") == 0)
         {
+            //fprintf(stderr, "plik");
+            filename_loaded = true;
             filename = argv[i + 1];
         }
-        if (strcmp(argv[i], "-p\0") == 0)
+        else if (strcmp(argv[i], "-p\0") == 0)
         {
+            //fprintf(stderr, "port\n");
             port = atoi(argv[i + 1]);
+            if (port == 0 && strcmp(argv[i + 1], "0\0") != 0)
+            {
+                fprintf(stderr, "Wrong port\n");
+                return 1;
+            }
+            // fprintf(stderr, "%d\n", port);
         }
-        if (strcmp(argv[i], "-t\0") == 0)
+        else if (strcmp(argv[i], "-t\0") == 0)
         {
             timeout = atoi(argv[i + 1]);
         }
         else
         {
+            fprintf(stderr, "Wrong parameter flag, server terminated.\n");
             exit(1);
         }
     }
+
     if (!check_arguments(filename, port, timeout))
     {
         fprintf(stderr, "Wrong arguments, server terminated.\n");
+        return 1;
+    }
+    if (!filename_loaded)
+    {
+        fprintf(stderr, "No filename given\n");
         return 1;
     }
     
     //fprintf(stderr, "tu dziala\n");
     event_t* events;
     size_t num_of_events;
-    fprintf(stderr, "tu dziala &events = %ld events = %ld\n", &events, events);
+    //fprintf(stderr, "tu dziala &events = %ld events = %ld\n", &events, events);
     read_file_to_array(filename, &events, &num_of_events);
     wypisz_eventy(events, num_of_events);
     fprintf(stderr, "czytanie eventow dziala\n");
