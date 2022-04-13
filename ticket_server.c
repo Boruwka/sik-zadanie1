@@ -216,31 +216,51 @@ void init_reservations_t(reservations_t r)
 }
 
 
-void read_file_to_array(char* filename, event_t* events, size_t* num_of_events)
+void read_file_to_array(char* filename, event_t** events, size_t* num_of_events)
 {
     FILE* fptr = fopen(filename, "r");
     char* title = malloc(MAX_TITLE_SIZE * sizeof(char));
     char* tickets_str = malloc(MAX_TITLE_SIZE * sizeof(char));
     int tickets;
     size_t restrict_size = MAX_TITLE_SIZE;
-    events = malloc(2 * sizeof(event_t));
+    (*events) = malloc(2 * sizeof(event_t));
     (*num_of_events) = 0; 
     size_t allocated_size = 2;   
+    //fprintf(stderr, "tu dziala wewnatrz read events = %ld *events = %ld\n", events, *events);
 
-    while (getline(&title, &restrict_size, fptr))
+    while (getline(&title, &restrict_size, fptr) >= 0)
     {
+        //fprintf(stderr, "tu dziala pentla getline %s\n", title);
         getline(&tickets_str, &restrict_size, fptr);
+        //fprintf(stderr, "kolejne getline to %s\n", tickets_str);
         tickets = atoi(tickets_str);
-        num_of_events++;
+        (*num_of_events)++;
         if ((*num_of_events) > allocated_size)
         {
+            //fprintf(stderr, "trzeba zrealokowac\n");
             allocated_size *= 2;
-            events = realloc(events, allocated_size);
+            //fprintf(stderr, "%ld\n", (*events));
+            (*events) = realloc((*events), allocated_size * sizeof(event_t));
         }
-        strcpy(events[(*num_of_events) - 1].name, title);
-        events[(*num_of_events) - 1].ticket_count = tickets;
-        events[(*num_of_events) - 1].name_length = strlen(title);
+        //fprintf(stderr, "zrealokowane\n");
+        //fprintf(stderr, "%ld\n", (*events));
+        (*events)[(*num_of_events) - 1].name = malloc(MAX_TITLE_SIZE * sizeof(char));
+        
+        //fprintf(stderr, "zmallocowane\n");
+        strcpy((*events)[(*num_of_events) - 1].name, title);
+        //fputs((*events)[(*num_of_events) - 1].name, stderr);
+        //fprintf(stderr, "tu dziala\n");
+        (*events)[(*num_of_events) - 1].ticket_count = tickets;
+        (*events)[(*num_of_events) - 1].name_length = strlen(title);
+        //fprintf(stderr, "tu dziala\n");
     } 
+
+    /*fprintf(stderr, "bedziemy wypisywac tablice\n");
+    for (size_t i = 0; i < 3; i++)
+    {
+        fprintf(stderr, "%s %d\n", (*events)[i].name, (*events)[i].ticket_count);
+    }
+    fprintf(stderr, "wypisana\n"); */
 
     fclose(fptr);  
 }
@@ -248,9 +268,10 @@ void read_file_to_array(char* filename, event_t* events, size_t* num_of_events)
 // funkcja tylko do debugu
 void wypisz_eventy(const event_t* events, size_t num_of_events)
 {
+    // fprintf(stderr, "bedziemy wypisywac eventy num = %u\n", num_of_events);
     for (size_t i = 0; i < num_of_events; i++)
     {
-        printf("%s %d\n", events[i].name, events[i].ticket_count);
+        fprintf(stderr, "%s %d\n", events[i].name, events[i].ticket_count);
     }
 }
 
@@ -554,6 +575,10 @@ int main(int argc, char *argv[])
         {
             timeout = atoi(argv[i + 1]);
         }
+        else
+        {
+            exit(1);
+        }
     }
     if (!check_arguments(filename, port, timeout))
     {
@@ -561,10 +586,13 @@ int main(int argc, char *argv[])
         return 1;
     }
     
+    //fprintf(stderr, "tu dziala\n");
     event_t* events;
     size_t num_of_events;
-    read_file_to_array(filename, events, &num_of_events);
-    // wypisz_mape(events);
+    fprintf(stderr, "tu dziala &events = %ld events = %ld\n", &events, events);
+    read_file_to_array(filename, &events, &num_of_events);
+    wypisz_eventy(events, num_of_events);
+    fprintf(stderr, "czytanie eventow dziala\n");
 
     int socket_fd = bind_socket(port);
     struct sockaddr_in client_address;
@@ -577,6 +605,7 @@ int main(int argc, char *argv[])
 
     while (true)
     {
+        // fprintf(stderr, "tu dziala\n");
         size_t read_length = read_message(socket_fd, &client_address, buffer, sizeof(buffer));
         char* client_ip = inet_ntoa(client_address.sin_addr);
         uint16_t client_port = ntohs(client_address.sin_port);
