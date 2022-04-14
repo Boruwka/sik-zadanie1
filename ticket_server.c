@@ -304,7 +304,9 @@ void check_alloc(void* ptr)
 
 bool has_reservation_expired(reservation_t* r)
 {
+    //fprintf(stderr, "bedziemy sprawdzac czy wygasla\n");
     long long time_in_sec = time(NULL);
+    //fprintf(stderr, "exp time to %lld a teraz jest %lld\n", r->expiration_time, time_in_sec);
     return (r->expiration_time < time_in_sec);
 }
 
@@ -373,20 +375,24 @@ unsigned int push_event_to_buffer(unsigned char* buffer, const event_t e, const 
     return position + strlen(e.name);
 }
 
-void update_event(event_t* e, unsigned int id, unsigned int* reservation_counter, reservations_t* reservations)
+void update_event(event_t* e, unsigned int id, unsigned int* reservations_id_counter, reservations_t* reservations)
 {
     // przechodzimy po rezerwacjach i sprawdzamy, czy może ktoś nie odebrał swoich biletów do tego eventu
-    for (unsigned int i = MIN_RESERVATION_ID; i <= (*reservation_counter); i++)
+    fprintf(stderr, "bedziemy updatowac eventy, reservation id counter to %u\n", (*reservations_id_counter));
+    for (unsigned int i = MIN_RESERVATION_ID; i < (*reservations_id_counter); i++)
     {
-        if (!has_reservation_expired(&(reservations->tab[i])))
+        if (!has_reservation_expired(&(reservations->tab[i - MIN_RESERVATION_ID])))
         {
+            fprintf(stderr, "rezerwacja nie wygasla\n");
             break;
         }
-        else if (!reservations->tab[i].tickets_received)
+        else if (!reservations->tab[i].tickets_received && reservations->tab[i].event_id == id)
         {
+            fprintf(stderr, "rezerwacja wygasla i nieodebrana\n");
             // przeminęła i bilety nieodebrane
             e->ticket_count += reservations->tab[i].ticket_count;
         }
+        fprintf(stderr, "rezerwacja wygasla i odebrana\n");
     }
     
 }
@@ -571,8 +577,8 @@ size_t process_get_reservation(unsigned char* buffer, event_t* events, reservati
     
     events[event_id].ticket_count -= ticket_count;
     reservation_t r;
-    r.reservation_id = (*reservation_id_counter) + 1;
-    reservation_id_counter++;
+    r.reservation_id = (*reservation_id_counter);
+    (*reservation_id_counter)++;
     r.event_id = event_id;
     r.ticket_count = ticket_count;
     r.cookie = generate_cookie(r.reservation_id, r.event_id);
@@ -623,6 +629,7 @@ char* generate_ticket(unsigned int ticket_counter)
 
 size_t push_tickets_to_buffer(unsigned char* buffer, const uint16_t ticket_count, unsigned int ticket_counter)
 {
+    fprintf(stderr, "bedziemy pushowac bilety od countera = %u\n", ticket_counter);
     for (uint16_t i = 0; i < ticket_count; i++)
     {
         char* ticket = generate_ticket(ticket_counter);
@@ -635,6 +642,19 @@ size_t push_tickets_to_buffer(unsigned char* buffer, const uint16_t ticket_count
     }
     
     return TICKET_LEN * ticket_count;
+}
+
+bool cmp_strings(char* str1, char* str2, size_t size)
+{
+    // true jak so takie same
+    for (size_t i = 0; i < size; i++)
+    {
+        if (str1[i] != str2[i])
+        {
+            return false;
+        }
+    }
+    return true;   
 }
 
 size_t process_get_tickets(unsigned char* buffer, reservations_t* reservations, unsigned int* ticket_counter)
@@ -663,31 +683,43 @@ size_t process_get_tickets(unsigned char* buffer, reservations_t* reservations, 
     //fprintf(stderr, "tu dziala\n");
     size_t reservation_index = reservation_id - MIN_RESERVATION_ID;
     fprintf(stderr, "reservation index to %ld\n", reservation_index);
-    fprintf(stderr, "mamy %ld rezerwacji\n", reservations->size);
+    //fprintf(stderr, "mamy %ld rezerwacji\n", reservations->size);
     if (reservation_index < 0  || reservation_index >= reservations->size)
     {
+        fprintf(stderr, "zly indeks/id %ld id = %d, bad request\n", reservation_index, reservation_id);
         return push_bad_request(buffer, reservation_id);
     }
     
     //fprintf(stderr, "tu dziala\n");
     if (has_reservation_expired(&(reservations->tab[reservation_index])))
     {
+        fprintf(stderr, "rezerwacja jest expired, bad request\n");
         // fprintf(stderr, "czas przeminal jest sekunda %lld a exp time byl %lld\n", reservations->tab[reservation_index].expiration_time, time_in_sec);
         return push_bad_request(buffer, reservation_id);
     }
 
-    if (strcmp(reservations->tab[reservation_index].cookie, cookie) != 0)
+    if (!cmp_strings(reservations->tab[reservation_index].cookie, cookie, COOKIE_LEN))
     {
-        fprintf(stderr, "zle cookie\n");
+        fprintf(stderr, "zle cookie, bad request\n");
+        fprintf(stderr, "podane cookie to\n%s a powinno byc\n%s\n", reservations->tab[reservation_index].cookie, cookie);
+        /*wypisz_bufor(cookie, COOKIE_LEN);  
+        fprintf(stderr, "a powinno byc:\n");
+        wypisz_bufor(reservations->tab[reservation_index].cookie, COOKIE_LEN);*/
         return push_bad_request(buffer, reservation_id);
     }
 
     unsigned int request_ticket_counter = *ticket_counter;
     if (reservations->tab[reservation_index].tickets_received)
     {
+        fprintf(stderr, "juz odbieralismy bilety z tej rezerwacji\n");
         request_ticket_counter = reservations->tab[reservation_index].first_ticket_counter;
-        *ticket_counter += reservations->tab[reservation_index].ticket_count;
     }
+    else
+    {
+        fprintf(stderr, "jeszcze nie odbieralismy biletow z tej rezerwacji\n");
+        (*ticket_counter) += reservations->tab[reservation_index].ticket_count;
+    }
+    fprintf(stderr, "request ticket counter to bedzie %u\n", request_ticket_counter);
     reservations->tab[reservation_index].tickets_received = true;
     reservations->tab[reservation_index].first_ticket_counter = request_ticket_counter;
     buffer[0] = TICKETS_ID;
@@ -798,7 +830,7 @@ int main(int argc, char *argv[])
     unsigned char* buffer = (unsigned char*)malloc(BUFFER_SIZE * sizeof(char));
     check_alloc(buffer);
 
-    unsigned int reservation_id_counter = MIN_RESERVATION_ID - 1;
+    unsigned int reservation_id_counter = MIN_RESERVATION_ID;
     reservations_t reservations; // po prostu tablica z realokowaniem
     init_reservations_t(&reservations);
     size_t send_length = 0;
