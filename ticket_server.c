@@ -373,8 +373,26 @@ unsigned int push_event_to_buffer(unsigned char* buffer, const event_t e, const 
     return position + strlen(e.name);
 }
 
+void update_event(event_t* e, unsigned int id, unsigned int* reservation_counter, reservations_t* reservations)
+{
+    // przechodzimy po rezerwacjach i sprawdzamy, czy może ktoś nie odebrał swoich biletów do tego eventu
+    for (unsigned int i = MIN_RESERVATION_ID; i <= (*reservation_counter); i++)
+    {
+        if (!has_reservation_expired(&(reservations->tab[i])))
+        {
+            break;
+        }
+        else if (!reservations->tab[i].tickets_received)
+        {
+            // przeminęła i bilety nieodebrane
+            e->ticket_count += reservations->tab[i].ticket_count;
+        }
+    }
+    
+}
 
-unsigned int process_get_events(unsigned char* buffer, const event_t* events, const size_t num_of_events)
+
+unsigned int process_get_events(unsigned char* buffer, event_t* events, const size_t num_of_events, unsigned int* reservations_counter, reservations_t* reservations)
 {
     size_t remaining_size = BUFFER_SIZE-2;
     buffer[0] = EVENTS_ID;
@@ -382,6 +400,7 @@ unsigned int process_get_events(unsigned char* buffer, const event_t* events, co
     // size_t num_of_events = events.size();
     for (size_t i = 0; i < num_of_events; i++)
     {
+        update_event(&(events[i]), i, reservations_counter, reservations);
         //fprintf(stderr, "event nr %ld\n", i);
         if (event_get_size(&(events[i])) > remaining_size)
         {
@@ -690,7 +709,7 @@ void process_request(unsigned char* buffer, event_t* events, reservations_t* res
     if (buffer[0] == GET_EVENTS_ID)
     {
         fprintf(stderr, "to get events\n");
-        *send_length = process_get_events(buffer, events, num_of_events);
+        *send_length = process_get_events(buffer, events, num_of_events, reservation_id_counter, reservations);
     }
     else if (buffer[0] == GET_RESERVATION_ID)
     {
