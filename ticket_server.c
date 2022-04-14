@@ -36,6 +36,8 @@ const size_t COOKIE_LEN = 48;
 const size_t TICKET_LEN = 7;
 const size_t MIN_RESERVATION_ID = 99999; // idk czy tyle, trzeba to sprawdzić
 const size_t MAX_TITLE_SIZE = 80; // też idk czy tyle
+const size_t MIN_COOKIE_CHAR = 33;
+const size_t MAX_COOKIE_CHAR = 126;
 
 // Evaluate `x`: if non-zero, describe it as a standard error code and exit with an error.
 #define CHECK(x)                                                          \
@@ -178,7 +180,7 @@ struct event_t
     // int id; // wystarczy indeks w wektorze
     char* name;
     uint16_t ticket_count;
-    size_t name_length;
+    uint8_t name_length;
 
 };
 
@@ -186,7 +188,7 @@ typedef struct event_t event_t;
 
 size_t event_get_size(const event_t* e)
 {
-    return e->name_length + 4;
+    return e->name_length + sizeof(e->ticket_count) + sizeof(e->name_length) + sizeof(unsigned int);
 }
 
 struct reservation_t
@@ -209,11 +211,37 @@ struct reservations_t
 
 typedef struct reservations_t reservations_t;
 
-void init_reservations_t(reservations_t r)
+void init_reservations_t(reservations_t* r)
 {
-    r.size = 0;
-    r.allocated_size = 2;
-    r.tab = malloc(2 * sizeof(reservation_t));
+    r->size = 0;
+    r->allocated_size = 2;
+    r->tab = malloc(2 * sizeof(reservation_t));
+}
+
+void wypisz_bufor(char* buffer, size_t s)
+{
+    /*for (size_t i = 0; i < s; i++)
+    {
+        fprintf(stderr, "%c", buffer[i]);
+    }
+    fprintf(stderr, "\n"); */
+    for (size_t i = 0; i < s; i++)
+    {
+        fprintf(stderr, "%d %c\n", buffer[i], buffer[i]);
+    }
+}
+
+void get_rid_of_endline(char* str)
+{
+    size_t size = strlen(str);
+    
+    for (size_t i = 0; i < size; i++)
+    {
+        if (str[i] == '\n')
+        {
+            str[i] = '\0';
+        }
+    }
 }
 
 
@@ -231,37 +259,21 @@ void read_file_to_array(char* filename, event_t** events, size_t* num_of_events)
 
     while (getline(&title, &restrict_size, fptr) >= 0)
     {
-        //fprintf(stderr, "tu dziala pentla getline %s\n", title);
         getline(&tickets_str, &restrict_size, fptr);
-        //fprintf(stderr, "kolejne getline to %s\n", tickets_str);
         tickets = atoi(tickets_str);
         (*num_of_events)++;
         if ((*num_of_events) > allocated_size)
         {
-            //fprintf(stderr, "trzeba zrealokowac\n");
             allocated_size *= 2;
-            //fprintf(stderr, "%ld\n", (*events));
             (*events) = realloc((*events), allocated_size * sizeof(event_t));
         }
-        //fprintf(stderr, "zrealokowane\n");
-        //fprintf(stderr, "%ld\n", (*events));
         (*events)[(*num_of_events) - 1].name = malloc(MAX_TITLE_SIZE * sizeof(char));
         
-        //fprintf(stderr, "zmallocowane\n");
+        get_rid_of_endline(title);
         strcpy((*events)[(*num_of_events) - 1].name, title);
-        //fputs((*events)[(*num_of_events) - 1].name, stderr);
-        //fprintf(stderr, "tu dziala\n");
         (*events)[(*num_of_events) - 1].ticket_count = tickets;
         (*events)[(*num_of_events) - 1].name_length = strlen(title);
-        //fprintf(stderr, "tu dziala\n");
     } 
-
-    /*fprintf(stderr, "bedziemy wypisywac tablice\n");
-    for (size_t i = 0; i < 3; i++)
-    {
-        fprintf(stderr, "%s %d\n", (*events)[i].name, (*events)[i].ticket_count);
-    }
-    fprintf(stderr, "wypisana\n"); */
 
     fclose(fptr);  
 }
@@ -296,8 +308,11 @@ unsigned int push_cookie_to_buffer(char* buffer, char* cookie)
 {
     for (size_t i = 0; i < COOKIE_LEN; i++)
     {
+        fprintf(stderr, "tu jestem i = %ld cookie to %d\n", i, cookie[i]);
         buffer[i] = cookie[i];
+        fprintf(stderr, "przypisanie done\n");
     }
+    fprintf(stderr, "cookie zapisane\n");
     return COOKIE_LEN;
 }
 
@@ -327,9 +342,9 @@ unsigned int push_id_to_buffer(char* buffer, unsigned int id)
     return num_of_bytes;
 }
 
-unsigned int push_event_to_buffer(char* buffer, const event_t e, const size_t id)
+unsigned int push_event_to_buffer(char* buffer, const event_t e, const unsigned int id)
 {
-    fprintf(stderr, "bedziemy wsadzac event\n");
+    //fprintf(stderr, "bedziemy wsadzac event\n");
     size_t position = 0;
     push_id_to_buffer(buffer, id);
     //fprintf(stderr, "tu dziala\n");
@@ -341,7 +356,8 @@ unsigned int push_event_to_buffer(char* buffer, const event_t e, const size_t id
     //fprintf(stderr, "tu dziala\n");
     position++;
     strcpy(&(buffer[position]), e.name);
-    fprintf(stderr, "wsadzony, bufor to teraz %s\n", buffer);
+    //fprintf(stderr, "wsadzony, bufor o dl = %ld to teraz:\n", position + strlen(e.name));
+    //wypisz_bufor(buffer, position + strlen(e.name));
     return position + strlen(e.name);
 }
 
@@ -354,16 +370,16 @@ unsigned int process_get_events(char* buffer, const event_t* events, const size_
     // size_t num_of_events = events.size();
     for (size_t i = 0; i < num_of_events; i++)
     {
-        fprintf(stderr, "event nr %ld\n", i);
+        //fprintf(stderr, "event nr %ld\n", i);
         if (event_get_size(&(events[i])) > remaining_size)
         {
-            fprintf(stderr, "nie mozemy go wsadzic\n");
+            //fprintf(stderr, "nie mozemy go wsadzic\n");
             // nie możemy tego eventu wsadzić, przechodzimy do następnego
             continue;
         }
         else
         {
-            fprintf(stderr, "wsadzamy go na pozycji %ld\n", BUFFER_SIZE-1-remaining_size);
+            //fprintf(stderr, "wsadzamy go na pozycji %ld\n", BUFFER_SIZE-1-remaining_size);
             push_event_to_buffer(&(buffer[BUFFER_SIZE-1-remaining_size]), events[i], i);
             remaining_size -= event_get_size(&(events[i]));
             send_length += event_get_size(&(events[i]));
@@ -371,7 +387,8 @@ unsigned int process_get_events(char* buffer, const event_t* events, const size_
         }
     }
 
-    fprintf(stderr, "get events, wyslemy taki bufor: %s\n", buffer);
+    //fprintf(stderr, "get events, wyslemy taki bufor:\n");
+    //wypisz_bufor(buffer, send_length);
     return send_length;
 }
 
@@ -421,71 +438,111 @@ void fill_with_random_values(char* buffer, size_t len)
     }
 }
 
+void fill_with_random_cookie_values(char* buffer, size_t len)
+{
+    for (size_t i = 0; i < len; i++)
+    {
+        buffer[i] = ((char)rand() % (MAX_COOKIE_CHAR - MIN_COOKIE_CHAR)) + MIN_COOKIE_CHAR;
+    }
+}
+
+void push_id_to_cookie(char* cookie, unsigned int id)
+{
+    int div_size = 64;
+
+    for (int i = 4 * sizeof(id) - 1; i >= 0; i--)
+    {
+        //fprintf(stderr, "pentla push id i = %d\n", i);
+        cookie[i] = id % div_size;
+        id /= div_size;
+        cookie[i] += MIN_COOKIE_CHAR;
+    }
+      
+}
+
 char* generate_cookie(const unsigned int reservation_id, const unsigned int event_id)
 {
-    size_t num_of_id_bytes = sizeof(reservation_id);
+    size_t num_of_id_bytes = 4 * sizeof(reservation_id);
     char* cookie = (char*)malloc(COOKIE_LEN * sizeof(char));
     check_alloc(cookie);
-    push_id_to_buffer(cookie, reservation_id);
-    push_id_to_buffer(&(cookie[num_of_id_bytes]), event_id);
-    fill_with_random_values(&(cookie[2 * num_of_id_bytes]), COOKIE_LEN - num_of_id_bytes);
+    push_id_to_cookie(cookie, reservation_id);
+    push_id_to_cookie(&(cookie[num_of_id_bytes]), event_id);
+    fill_with_random_cookie_values(&(cookie[2 * num_of_id_bytes]), COOKIE_LEN - num_of_id_bytes);
+    fprintf(stderr, "cookie to:\n");
+    wypisz_bufor(cookie, COOKIE_LEN);
+    return cookie;
 }
 
 size_t push_reservation_to_buffer(char* buffer, reservation_t r)
 {
     // reservation_id, event_id, ticket_count, cookie, expiration_time
+    fprintf(stderr, "pushujemy rezerwacje do bufera\n");
     size_t pos = 0;
     push_id_to_buffer(buffer, r.reservation_id);
     pos += sizeof(r.reservation_id);
     push_id_to_buffer(&(buffer[pos]), r.event_id);
     pos += sizeof(r.event_id);
     push_ticket_count_to_buffer(&(buffer[pos]), r.event_id);
+    fprintf(stderr, "tu dziala\n");
     pos += sizeof(r.ticket_count);
     push_cookie_to_buffer(&(buffer[pos]), r.cookie);
     pos += COOKIE_LEN;
+    fprintf(stderr, "tu dziala\n");
     push_exp_time_to_buffer(&(buffer[pos]), r.expiration_time);
     pos += sizeof(r.expiration_time);
+    fprintf(stderr, "spushowana\n");
     return pos;
 }
 
 void reservations_insert(reservations_t* reservations, const reservation_t r)
 {
+    //fprintf(stderr, "bedziemy insertowac\n");
     reservations->size++;
     if (reservations->size > reservations->allocated_size)
     {
+        //fprintf(stderr, "size = %d allocated = %d trzeba realokowac\n", reservations->size, reservations->allocated_size);
         reservations->allocated_size *= 2;
         reservations->tab = realloc(reservations->tab, reservations->allocated_size);
     }
     reservations->tab[reservations->size - 1] = r;
+    //fprintf(stderr, "zinsertowane\n");
 }
 
-size_t process_get_reservation(char* buffer, const event_t* events, reservations_t* reservations, const unsigned int num_of_events, unsigned int* reservation_id_counter)
+size_t process_get_reservation(char* buffer, event_t* events, reservations_t* reservations, const unsigned int num_of_events, unsigned int* reservation_id_counter)
 {
     /* Serwer odpowiada komunikatem BAD_REQUEST z wartością event_id w odpowiedzi na komunikat GET_RESERVATION, jeśli prośba nie może być zrealizowana, klient podał nieprawidłowe event_id, prosi o zero biletów, liczba dostępnych biletów jest mniejsza niż żądana, bilety zostały w międzyczasie zarezerwowane przez innego klienta, żądana liczba biletów nie mieści się w komunikacie TICKETS (który musi się zmieścić w jednym datagramie UDP). */
     /* RESERVATION – message_id = 4, reservation_id, event_id, ticket_count, cookie, expiration_time, odpowiedź na komunikat GET_RESERVATION potwierdzająca rezerwację, zawierająca czas, do którego należy odebrać zarezerwowane bilety; */
     
+    fprintf(stderr, "procesujemy get reservation\n");
     unsigned int event_id = read_id_from_buffer(&(buffer[1]));
+    fprintf(stderr, "event id z requesta to %u num of events to %u\n", event_id, num_of_events);
     if (event_id >= num_of_events)
-    {
+    {        
         return push_bad_request(buffer, event_id);
     }
 
-    size_t ticket_count = read_ticket_count_from_buffer(&(buffer[5]));
-    if (ticket_count == 0 || ticket_count < events[event_id].ticket_count || ticket_count > MAX_TICKET_COUNT)
+    uint16_t ticket_count = read_ticket_count_from_buffer(&(buffer[5]));
+    fprintf(stderr, "ticket count z requesta to %u\n", ticket_count);
+    if (ticket_count == 0 || ticket_count > events[event_id].ticket_count || ticket_count > MAX_TICKET_COUNT)
     {
+        fprintf(stderr, "zle ticket count moze byc do %u\n", events[event_id].ticket_count);
         return push_bad_request(buffer, event_id);
     }
     
+    events[event_id].ticket_count -= ticket_count;
     reservation_t r;
     r.reservation_id = (*reservation_id_counter) + 1;
     reservation_id_counter++;
     r.event_id = event_id;
     r.ticket_count = ticket_count;
     r.cookie = generate_cookie(r.reservation_id, r.event_id);
+    //fprintf(stderr, "tu dziala\n");
     time_t time_in_sec;
     time(&time_in_sec);
     r.expiration_time = (long long)time_in_sec;
+    //fprintf(stderr, "tu dziala2\n");
     reservations_insert(reservations, r);
+    fprintf(stderr, "rezerwacja zinsertowana\n");
 
     buffer[0] = RESERVATION_ID;
     unsigned int send_length = 1;
@@ -570,7 +627,7 @@ size_t process_get_tickets(char* buffer, reservations_t* reservations)
 }
 
 // odczytuje bufor, przetwarza żądanie i umieszcza w buforze stosowną odpowiedź
-void process_request(char* buffer, const event_t* events, reservations_t* reservations, const unsigned int num_of_events, unsigned int* reservation_id_counter, size_t* send_length)
+void process_request(char* buffer, event_t* events, reservations_t* reservations, const unsigned int num_of_events, unsigned int* reservation_id_counter, size_t* send_length)
 {
     fprintf(stderr, "bedziemy procesowac requesta\n");
     if (buffer[0] == GET_EVENTS_ID)
@@ -591,6 +648,7 @@ void process_request(char* buffer, const event_t* events, reservations_t* reserv
 
 int main(int argc, char *argv[])
 {
+    // printf("%d %d\n", sizeof(size_t), sizeof(unsigned int));
     char* filename;
     int port = DEFAULT_PORT;
     int timeout = DEFAULT_TIMEOUT;
@@ -660,7 +718,7 @@ int main(int argc, char *argv[])
 
     unsigned int reservation_id_counter = MIN_RESERVATION_ID - 1;
     reservations_t reservations; // po prostu tablica z realokowaniem
-    init_reservations_t(reservations);
+    init_reservations_t(&reservations);
     size_t send_length = 0;
 
     while (true)
