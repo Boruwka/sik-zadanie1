@@ -542,16 +542,18 @@ size_t push_reservation_to_buffer(unsigned char* buffer, reservation_t r)
 
 void reservations_insert(reservations_t* reservations, const reservation_t r)
 {
-    //fprintf(stderr, "bedziemy insertowac\n");
+    fprintf(stderr, "bedziemy insertowac\n");
+    char* debug = malloc(32);
     reservations->size++;
     if (reservations->size > reservations->allocated_size)
     {
-        //fprintf(stderr, "size = %d allocated = %d trzeba realokowac\n", reservations->size, reservations->allocated_size);
+        fprintf(stderr, "size = %ld allocated = %ld trzeba realokowac\n", reservations->size, reservations->allocated_size);
         reservations->allocated_size *= 2;
-        reservations->tab = realloc(reservations->tab, reservations->allocated_size);
+        reservations->tab = realloc(reservations->tab, reservations->allocated_size * sizeof(reservation_t));
+        fprintf(stderr, "zrealokowane\n");
     }
     reservations->tab[reservations->size - 1] = r;
-    //fprintf(stderr, "zinsertowane\n");
+    fprintf(stderr, "zinsertowane\n");
 }
 
 size_t process_get_reservation(unsigned char* buffer, event_t* events, reservations_t* reservations, const unsigned int num_of_events, unsigned int* reservation_id_counter, int timeout)
@@ -575,6 +577,8 @@ size_t process_get_reservation(unsigned char* buffer, event_t* events, reservati
         return push_bad_request(buffer, event_id);
     }
     
+    fprintf(stderr, "tu dziala\n");
+    
     events[event_id].ticket_count -= ticket_count;
     reservation_t r;
     r.reservation_id = (*reservation_id_counter);
@@ -590,8 +594,10 @@ size_t process_get_reservation(unsigned char* buffer, event_t* events, reservati
     r.expiration_time = time_in_sec + timeout;
     //fprintf(stderr, "obecny czas to %lld\n", time_in_sec);
     //fprintf(stderr, "tu dziala2\n");
+    // char* debug = malloc(2);
+    fprintf(stderr, "bedziemy insertowac rezerwacje\n");
     reservations_insert(reservations, r);
-    //fprintf(stderr, "rezerwacja zinsertowana\n");
+    fprintf(stderr, "rezerwacja zinsertowana\n");
 
     buffer[0] = RESERVATION_ID;
     unsigned int send_length = 1;
